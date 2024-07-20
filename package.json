@@ -16,6 +16,6 @@
   "author": "Bartosz Sypytkowski <b.sypytkowski@gmail.com>",
   "license": "MIT",
   "dependencies": {
-    "radix-tree": "^0.3.4"
+    "eventemitter3": "^5.0.1"
   }
 }

@@ -1,51 +1,10 @@
-// numeric values will be converted into characters before inserting them into radix tree
-const CHARS = [
-    '0','1','2','3','4','5','6','7','8','9',
-    'A','B','C','D','E','F','G','H','I','J',
-    'K','L','M','N','O','P','Q','R','S','T',
-    'U','V','W','X','Y','Z','a','b','c','d',
-    'e','f','g','h','i','j','k','l','m','n',
-    'o','p','q','r','s','t','u','v','w','x',
-    'y','z'
-]
-
-const MIN = -1
-const MAX = CHARS.length
-
-/**
- * 
- * @param {string} key 
- * @param {number} offset
- * @returns {[string, string]}
- */
-const splitKey = (key, offset) => {
-    const splitIndex = key.lastIndexOf('#')
-    const fractional = key.slice(0, splitIndex)
-    const peer = key.slice(splitIndex+1)
-    return [fractional, peer]
-}
-/**
- * 
- * @param {string} key 
- * @param {number} offset
- * @returns {string}
- */
-const lastKey = (key, offset) => {
-    const splitIndex = key.lastIndexOf('#')
-    let fractional = key.slice(0, splitIndex)
-    const peer = key.slice(splitIndex+1)
-
-    const lastChar = fractional[fractional.length - 1] //TODO: get ASCII value
-    lastChar += offset
-    fractional = fractional.substring(0, fractional.length - 1) + CHARS[lastChar]
-    return fractional + '#' + peer
-}
-
+import EventEmitter from 'eventemitter3'
+import * as frac from './fractional-index'
 
 /**
  * A compressed linear sequence CRDT.
  */
-export class LSeq {
+export class LSeq extends EventEmitter {
     /**
      * 
      * @param {string} peerId 
@@ -55,7 +14,7 @@ export class LSeq {
         this.peerId = peerId
         /** 
          * A sorted map from fractional index to value
-         * @type {Array<{key:string,value:string}>} 
+         * @type {Array<{key:frac.FractionalIndex,value:string} | {key:frac.FractionalIndex,tombstone:number}>} 
          */
         this.entries = []
     }
@@ -66,20 +25,113 @@ export class LSeq {
      * @param {string} value 
      */
     insert(index, value) {
-        const [min, max] = this.splitKeyAtIndex(index)
-        this.insertBetween(min, max, value)
+        let offset = index
+        let i = 0
+        // find start index
+        for(; i < this.entries.length; i++) {
+            const e = this.entries[i]
+            if (e.value) {
+                offset -= e.value.length
+                if (offset > 0) {
+                    continue
+                }
+                if (offset < 0) {
+                    // the insert index is inside of the current entry, so we need to split it
+                    this.split(i, e.value.length + offset)
+                }
+            }
+        }
+        const left = frac.offset(e.key, e.value.length - 1)
+        const right = i + 1 < this.entries.length ? this.entries[i+1].key : frac.MAX
+        this.insertBetween(left, right, value)
+    }
+
+    /**
+     * 
+     * @param {frac.FractionalIndex} lower 
+     * @param {frac.FractionalIndex} upper 
+     * @param {string} value 
+     */
+    insertBetween(lower, upper, value) {
+        //TODO: now we need to check if value can fit in space between left and right, if not we need to further split it        
+        const key = frac.createBetween(this.peerId, left, right)
+        const entry = { key, value }
+        this.entries.insert(i+1, entry)
+        this.emit('changed', entry)
     }
 
     remove(index, length = 1) {
-        throw Error('not implemented')
+        if (length == 0) {
+            return
+        }
+        let offset = index
+        let i = 0
+        // find start index first
+        for(; i < this.entries.length; i++) {
+            const e = this.entries[i]
+            if (e.value) {
+                offset -= e.value.length
+                if (offset <= 0) {
+                    if (offset < 0) {
+                        // the insert index is inside of the current entry, so we need to split it
+                        this.split(i, e.value.length + offset)
+                        i++
+                    }
+                    break
+                }
+            }
+        }
+        // remove elements
+        while (length > 0) {
+            let e = this.entries[i]
+            if (e.value) {
+                if (e.value.length > length) {
+                    // we need to split current entry to contain the tombstone
+                    this.split(i, length)
+                }
+                // tombstone current entry
+                e.tombstone = e.value.length
+                delete e.value
+                this.emit('changed', e)
+            }
+            i++
+        }
     }
 
     /**
      * Merge another Linear sequence into this one.
-     * @param {Array<{key:string,value:string}>} entries 
+     * @param {({key:frac.FractionalIndex,value:string}|{key:frac.FractionalIndex,tombstone:number})[]} entries 
      */
     merge(entries) {
+        for (let e of entries) {
+            let [i, offset] = this.search(e.key)
+        }
         throw Error('not implemented')
+    }
+
+    /**
+     * Using binary search, try to find either index of an entry which contains search `key`
+     * or index of an entry at which the `key` should be inserted if not found. In latter case
+     * returned value will be negative insertion index.
+     * 
+     * @param {{key:FractionalIndex}[]} entries 
+     * @param {FractionalIndex} key 
+     * @returns {number}
+     */
+    search(entries, key) {
+        let i = 0
+        let j = entries.length
+        let cmp
+        while (i < j) {
+            let n = (i + j) >> 1
+            let [cmp, offset] = compare(key, entries[h])
+            if (cmp > 0) {
+                i = h + 1
+            } else {
+                j = h
+            }
+        }
+        return i < entries.length && cmp == 0 ? i : -i
     }
 
     /**
@@ -89,11 +141,13 @@ export class LSeq {
      */
     get(index) {
         for(let i = 0; i < index;) {
-            let e = this.entries[i]
-            i += e.value.length
-            let diff = i - index
-            if (diff >= 0) {
-                return e.value.charAt(e.value.length - diff)
+            const e = this.entries[i]
+            if (e.value) {
+                i += e.value.length
+                const diff = i - index
+                if (diff >= 0) {
+                    return e.value.charAt(e.value.length - diff)
+                }
             }
         }
         return null
@@ -102,58 +156,32 @@ export class LSeq {
     toString() {
         var str = ''
         for (let e of this.entries) {
-            str += e.value
+            if (e.value) {
+                str += e.value
+            }
         }
         return str
     }
 
     /**
-     * Insert current `value` at position between `min` and `max` keys.
+     * Split entry at index `i` at given `offset`.
      * @private
-     * @param {string} min 
-     * @param {string} max 
-     * @param {string} value 
+     * @param {number} i 
+     * @param {number} offset 
      */
-    insertBetween(min, max, value) {
-        throw Error('not implemented')
-    }
-
-    /**
-     * Splits keys at a given index. Returns key neighbors that can be used as insertion points.
-     * @private
-     * @param {number} index 
-     * @returns {[string, string]}
-     */
-    splitKeyAtIndex(index) {
-        let visited = 0
-        for(let i = 0; i < this.entries.length; i++) {
-            let e = this.entries[i]
-            visited += e.value.length
-            let diff = visited - index
-            if (diff > 0) {
-                // split existing entry in two
-                let offset = e.value.length - diff
-                let rightValue = e.value.splice(offset, e.value.length - offset)
-                let [leftKey, rightKey] = splitKey(e.key, offset)
-                this.entries.insert(i+1, { key: rightKey, value: rightValue })
-                return [leftKey, rightKey]
-            } else if (diff == 0) {
-                let leftKey = lastKey(e.key, e.value.length)
-                let rightKey = i+1 < this.entries.length ? this.entries[i+1] : MAX
-                return [leftKey, rightKey]
-            }
+    split(i, offset) {
+        const e = this.entries[i]
+        const key = frac.offset(e.key, offset)
+        let entry
+        if (e.value) {
+            const value = e.value.slice(offset)
+            e.value = e.value.slice(0, offset)
+            entry = { key, value }
+        } else {
+            const tombstone = e.tombstone - offset
+            e.tombstone = offset
+            entry = { key, tombstone }
         }
-        return null
-    }
-
-    /**
-     * Generates a fractional index fitting between `min` and `max`
-     * @private
-     * @param {string} min 
-     * @param {string} max
-     * @returns {string}
-     */
-    keyBetween(min, max) {
-        throw Error('not implemented')
+        this.entries.insert(i+1, entry)
     }
 }
