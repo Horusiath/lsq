@@ -1,0 +1,21 @@
+{
+  "name": "lsq",
+  "version": "1.0.0",
+  "description": "A compressed Linear Sequence (LSeq) CRDT",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "crdt",
+    "collaborative",
+    "text",
+    "editing"
+  ],
+  "author": "Bartosz Sypytkowski <b.sypytkowski@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "radix-tree": "^0.3.4"
+  }
+}
