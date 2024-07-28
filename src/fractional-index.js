@@ -80,40 +80,41 @@ export const offset = (key, offset) => {
 
 /**
  * Generates a fractional index that's lexically between `lower` and `upper` neighbors.
+ * Returns a newly generated index and a distance to upper neighbor (number of elements that can be sequentially inserted).
  * 
  * @param {number} peerId an unique peer ID of a person which creates this fractional index
  * @param {FractionalIndex|null} lower bound that must be lexically lower than a generated index
  * @param {FractionalIndex|null} upper bound that must be lexically higher than a generated index
  * @param {bool} lowerBound determines if generated element should be closer to the `lower` than `upper` bound
- * @returns {FractionalIndex}
+ * @returns {[FractionalIndex,number]} newly generated fractional index and a distance from it to an `upper` bound
  */
 export const createBetween = (peerId, lower, upper, lowerBound = true) => {
     lower |= MIN
     upper |= MAX
     let result = []
     let i = 0
-    let diff = false // are `lower` and `upper` different up to the index `i`
-    for (;i < lower.length && i < upper.length; i++) {
+    let distance = 0 // distance describes how many elements can be inserted between lower[i] and upper[i]
+    for (;i < lower.length - 1 && i < upper.length - 1; i++) {
         const lo = lower[i]
         const up = upper[i]
         if (up > lo + 1) {
             // lower and upper are different at index `i`
             const n = lowerBound ? lo + 1 : up - 1
+            distance = up - n
             result.push(n)
-            diff = true
             break
         } else {
             // lower and upper are the same at index `i`
             result.push(lo) 
         }
     }
-    while (!diff) {
-        const lo = i < lower.length ? lower[i] : 0
-        const up = i < upper.length ? lower[i] : 255
+    while (distance === 0) {
+        const lo = i < lower.length - 1 ? lower[i] : 0
+        const up = i < upper.length - 1 ? lower[i] : 255
         if (up > lo + 1) {
             const n = lowerBound ? lo + 1 : up - 1
+            distance = up - n
             result.push(n)
-            diff = true
         } else {
             result.push(lo)
         }
@@ -121,5 +122,5 @@ export const createBetween = (peerId, lower, upper, lowerBound = true) => {
     }
     // append peer ID
     result.push(peerId)
-    return new Uint8Array(result)
+    return [new Uint8Array(result), distance]
 }
